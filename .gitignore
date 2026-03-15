@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env.local
+
+# Local environment variables
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Firebase keys (if you have them in a json)
+serviceAccountKey.json
