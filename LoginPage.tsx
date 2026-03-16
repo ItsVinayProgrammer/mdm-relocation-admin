@@ -15,6 +15,9 @@ interface LoginPageProps {
   isAuthLoading: boolean;
 }
 
+const ACCESS_DENIED_MESSAGE =
+  "Access Denied: Your email is not authorized. Please contact the administrator.";
+
 const LoginPage: React.FC<LoginPageProps> = ({ user, isAuthLoading }) => {
   const [error, setError] = useState<string | null>(firebaseConfigError);
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -65,32 +68,12 @@ const LoginPage: React.FC<LoginPageProps> = ({ user, isAuthLoading }) => {
   }
 
   const getFriendlyAuthError = (code?: string): string => {
-    if (!code) {
-      return "Google sign-in failed. Please try again.";
-    }
-
-    if (code === "auth/operation-not-allowed") {
-      return "Google sign-in is disabled in Firebase Console. Enable Google provider under Authentication > Sign-in method.";
-    }
-
-    if (code === "auth/unauthorized-domain") {
-      return "This domain is not authorized. Add localhost to Firebase Authentication > Settings > Authorized domains.";
-    }
-
-    if (code === "auth/popup-closed-by-user") {
-      return "Sign-in popup was closed before completion. Please try again.";
-    }
-
-    if (code === "auth/popup-blocked") {
-      return "Popup was blocked by the browser. Retrying with redirect sign-in...";
-    }
-
-    return `Google sign-in failed (${code}).`;
+    return ACCESS_DENIED_MESSAGE;
   };
 
   const handleGoogleSignIn = async () => {
     if (!auth) {
-      setError("Firebase Auth is not configured. Please set VITE_FIREBASE_* env values.");
+      setError(ACCESS_DENIED_MESSAGE);
       return;
     }
 
@@ -104,7 +87,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ user, isAuthLoading }) => {
 
       if (authCode === "auth/popup-blocked" || authCode === "auth/cancelled-popup-request") {
         try {
-          setError("Popup was blocked. Continuing with redirect sign-in...");
+          setError(null);
           await signInWithRedirect(auth, googleProvider);
           return;
         } catch (redirectError) {
@@ -121,43 +104,47 @@ const LoginPage: React.FC<LoginPageProps> = ({ user, isAuthLoading }) => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#fff8ef] px-6 py-10">
-      <div className="absolute -left-20 -top-24 h-64 w-64 rounded-full bg-[#800000]/10 blur-3xl" />
-      <div className="absolute -bottom-20 -right-16 h-64 w-64 rounded-full bg-[#ffb000]/25 blur-3xl" />
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-[#f7f2ea] via-[#f2ebe2] to-[#e7ded1] px-6 py-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(128,0,0,0.16),_transparent_42%),radial-gradient(circle_at_bottom_right,_rgba(176,116,0,0.2),_transparent_45%)]" />
+      <div className="pointer-events-none absolute -left-20 top-10 h-72 w-72 rounded-full bg-[#800000]/20 blur-3xl" />
+      <div className="pointer-events-none absolute -right-20 bottom-10 h-72 w-72 rounded-full bg-[#ffb000]/25 blur-3xl" />
 
-      <div className="relative w-full max-w-md rounded-3xl border border-[#ffd98a] bg-white/95 p-8 shadow-2xl shadow-[#800000]/15 backdrop-blur">
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#800000]">MDM Relocation</p>
-        <h1 className="mt-2 text-3xl font-extrabold text-[#800000]">Booking Data Analytics</h1>
-        <p className="mt-3 text-sm leading-6 text-[#6b1b1b]">
-          Sign in with your authorized Google account to access the admin dashboard.
-        </p>
-        <p className="mt-2 text-xs text-[#8c3b3b]">
-          Sign-in uses Google popup first, with redirect fallback if the browser blocks popups.
-        </p>
+      <div className="relative w-full max-w-md rounded-3xl border border-white/45 bg-white/30 p-8 shadow-2xl shadow-[#800000]/20 backdrop-blur-xl">
+        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#7a1010]">MDM Relocation</p>
+        <h1 className="mt-3 text-3xl font-extrabold leading-tight text-[#3d0f0f]">MDM Operations Console</h1>
+        <p className="mt-3 text-sm leading-6 text-[#5b2a2a]">Secure Access for Authorized Personnel Only.</p>
 
-        {error && (
-          <div className="mt-5 rounded-lg border border-[#ffb000]/50 bg-[#fff6e1] px-4 py-3 text-sm text-[#6b1b1b]">
-            {error}
-          </div>
-        )}
+        {error && <p className="mt-5 text-sm font-medium text-[#a30000]">{ACCESS_DENIED_MESSAGE}</p>}
 
         <button
           type="button"
           onClick={handleGoogleSignIn}
           disabled={isSigningIn}
-          className="mt-7 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#800000] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#661010] disabled:cursor-not-allowed disabled:opacity-70"
+          className="mt-8 flex min-h-12 w-full items-center justify-center gap-3 rounded-xl bg-[#800000] px-5 py-3 text-base font-semibold text-white shadow-lg shadow-[#800000]/30 transition duration-300 hover:-translate-y-0.5 hover:bg-[#690000] hover:shadow-xl hover:shadow-[#800000]/35 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-75"
         >
-          <span>{isSigningIn ? "Signing in..." : "Sign in with Google"}</span>
+          {isSigningIn ? (
+            <>
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              <span>Authenticating...</span>
+            </>
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
+                <path
+                  fill="#EA4335"
+                  d="M12 10.2v3.9h5.5c-.2 1.3-1.7 3.9-5.5 3.9-3.3 0-6.1-2.8-6.1-6.2s2.8-6.2 6.1-6.2c1.9 0 3.2.8 3.9 1.5l2.7-2.6C17 2.9 14.8 2 12 2 6.9 2 2.8 6.1 2.8 11.2S6.9 20.4 12 20.4c6.9 0 9.1-4.9 9.1-7.5 0-.5-.1-.9-.1-1.3H12z"
+                />
+              </svg>
+              <span>Sign in with Google</span>
+            </>
+          )}
         </button>
 
-        <p className="mt-5 text-xs text-[#8c3b3b]">Your email must be present in authorized_users to continue.</p>
+        <p className="mt-4 text-center text-xs text-[#5f3a3a]">Only verified admin accounts can continue.</p>
+      </div>
 
-        <div className="mt-4 rounded-lg border border-[#800000]/20 bg-[#fffaf2] px-4 py-3 text-left text-xs text-[#6b1b1b]">
-          <p className="font-semibold text-[#800000]">If sign-in fails on localhost:</p>
-          <p>1. Firebase Console to Authentication to Sign-in method: enable Google.</p>
-          <p>2. Authentication to Settings to Authorized domains: ensure localhost is listed.</p>
-          <p>3. Project support email should be set in Firebase Authentication settings.</p>
-        </div>
+      <div className="relative mt-6 text-center text-xs text-[#5f3a3a]/90">
+        <p>© 2024 MDM Relocation. All rights reserved.</p>
       </div>
     </div>
   );
