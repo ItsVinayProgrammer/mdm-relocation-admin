@@ -40,11 +40,10 @@ service cloud.firestore {
     }
 
     match /admin_activity_logs/{logId} {
-      allow get, list: if isSuperAdmin() || isAuthorizedUser();
-      allow create: if isSuperAdmin() || (
-        isAuthorizedUser()
-        && request.resource.data.email == request.auth.token.email
-      );
+      allow get, list: if isSuperAdmin();
+      allow create: if signedIn()
+        && request.auth.token.email != null
+        && request.resource.data.email == request.auth.token.email;
     }
 
     match /{document=**} {

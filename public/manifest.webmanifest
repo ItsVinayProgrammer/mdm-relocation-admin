@@ -1,0 +1,31 @@
+{
+  "name": "MDM Admin Operations Console",
+  "short_name": "MDM Admin",
+  "description": "MDM Relocation admin operations dashboard",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#fff8ef",
+  "theme_color": "#800000",
+  "icons": [
+    {
+      "src": "/mdm-logo.png",
+      "sizes": "500x500",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/mdm-logo.png",
+      "sizes": "500x500",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/mdm-logo.png",
+      "sizes": "500x500",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

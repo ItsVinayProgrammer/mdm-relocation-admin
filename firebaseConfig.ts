@@ -12,7 +12,7 @@ const firebaseConfig = {
 };
 
 const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean);
-const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : undefined;
+export const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : undefined;
 
 export const db = hasFirebaseConfig
   ? getFirestore(app!)

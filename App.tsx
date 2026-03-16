@@ -106,7 +106,7 @@ const App: React.FC = () => {
           element={<LoginPage user={user} isAuthLoading={isAuthLoading} />}
         />
         <Route
-          path="/"
+          path="/dashboard"
           element={
             <ProtectedRoute
               user={user}
@@ -118,6 +118,7 @@ const App: React.FC = () => {
             </ProtectedRoute>
           }
         />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/admin-settings"
           element={
@@ -140,13 +141,16 @@ const App: React.FC = () => {
               user={user}
               isLoading={isRouteLoading}
               isAuthorized={hasDashboardAccess}
+              isSuperAdmin={isSuperAdmin}
+              requireSuperAdmin
+              redirectPath="/dashboard"
               onLogout={handleLogout}
             >
               <ActivityLogsPage onLogout={handleLogout} isSuperAdmin={isSuperAdmin} />
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>
   );

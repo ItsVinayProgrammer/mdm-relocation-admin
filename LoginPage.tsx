@@ -9,6 +9,7 @@ import {
 import { FirebaseError } from "firebase/app";
 import { auth, firebaseConfigError, googleProvider } from "./firebaseConfig";
 import AuthLoadingScreen from "./AuthLoadingScreen";
+import { logAdminActivity } from "./activityLogger";
 
 interface LoginPageProps {
   user: User | null;
@@ -80,10 +81,29 @@ const LoginPage: React.FC<LoginPageProps> = ({ user, isAuthLoading }) => {
     try {
       setError(null);
       setIsSigningIn(true);
-      await signInWithPopup(auth, googleProvider);
+      void logAdminActivity({ action: "Login attempt", target: "auth", metadata: { method: "google-popup" } });
+      const result = await signInWithPopup(auth, googleProvider);
+      void logAdminActivity({
+        action: "Login attempt",
+        target: "auth",
+        metadata: { method: "google-popup", outcome: "success" },
+        actorEmail: result.user.email ?? undefined,
+      });
     } catch (signInError) {
       console.error("Google sign-in failed:", signInError);
       const authCode = signInError instanceof FirebaseError ? signInError.code : undefined;
+
+      const fallbackEmail =
+        signInError instanceof FirebaseError && typeof signInError.customData?.email === "string"
+          ? signInError.customData.email
+          : undefined;
+      void logAdminActivity({
+        action: "Login attempt",
+        target: "auth",
+        status: "error",
+        metadata: { method: "google-popup", outcome: "error", code: authCode ?? "unknown" },
+        actorEmail: fallbackEmail,
+      });
 
       if (authCode === "auth/popup-blocked" || authCode === "auth/cancelled-popup-request") {
         try {
@@ -110,6 +130,11 @@ const LoginPage: React.FC<LoginPageProps> = ({ user, isAuthLoading }) => {
       <div className="pointer-events-none absolute -right-20 bottom-10 h-72 w-72 rounded-full bg-[#ffb000]/25 blur-3xl" />
 
       <div className="relative w-full max-w-md rounded-3xl border border-white/45 bg-white/30 p-8 shadow-2xl shadow-[#800000]/20 backdrop-blur-xl">
+        <img
+          src="/mdm-logo.png"
+          alt="MDM Relocation"
+          className="mx-auto h-20 w-20 rounded-full border border-[#f0cf95] bg-[#fff8eb] p-0.5 object-cover shadow-md"
+        />
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#7a1010]">MDM Relocation</p>
         <h1 className="mt-3 text-3xl font-extrabold leading-tight text-[#3d0f0f]">MDM Operations Console</h1>
         <p className="mt-3 text-sm leading-6 text-[#5b2a2a]">Secure Access for Authorized Personnel Only.</p>

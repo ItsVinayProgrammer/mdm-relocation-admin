@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -36,6 +37,7 @@ const AccessManagementPage: React.FC<AccessManagementPageProps> = ({ onLogout, s
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [isExportingJson, setIsExportingJson] = useState(false);
 
   useEffect(() => {
     if (!db) {
@@ -187,6 +189,59 @@ const AccessManagementPage: React.FC<AccessManagementPageProps> = ({ onLogout, s
     }
   };
 
+  const handleExportBookingsJson = async () => {
+    if (!db) {
+      setError("Firestore is not configured.");
+      return;
+    }
+
+    setIsExportingJson(true);
+    setError(null);
+
+    try {
+      const snapshot = await getDocs(collection(db, "bookings"));
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        total: snapshot.size,
+        records: snapshot.docs.map((bookingDoc) => ({
+          id: bookingDoc.id,
+          ...bookingDoc.data(),
+        })),
+      };
+
+      const jsonBlob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const downloadUrl = URL.createObjectURL(jsonBlob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `bookings-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+
+      void logAdminActivity({
+        action: "Data exported",
+        target: "bookings",
+        metadata: { format: "json", rows: snapshot.size },
+      });
+
+      setToastMessage("Bookings backup exported as JSON.");
+    } catch (exportError) {
+      console.error("Failed to export bookings backup:", exportError);
+      void logAdminActivity({
+        action: "Data exported",
+        target: "bookings",
+        status: "error",
+        metadata: { format: "json" },
+      });
+      setError("Failed to export bookings backup.");
+    } finally {
+      setIsExportingJson(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#fff8ef] px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-6xl">
@@ -219,6 +274,15 @@ const AccessManagementPage: React.FC<AccessManagementPageProps> = ({ onLogout, s
               className="min-h-11 rounded-xl bg-[#800000] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#661010] disabled:cursor-not-allowed disabled:opacity-70"
             >
               Add User
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportBookingsJson}
+              disabled={isExportingJson}
+              className="min-h-11 rounded-xl border border-[#0f766e] bg-[#ecfeff] px-5 py-3 text-sm font-semibold text-[#0f766e] transition hover:bg-[#cffafe] disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isExportingJson ? "Exporting..." : "Export to JSON"}
             </button>
           </div>
 

@@ -10,6 +10,7 @@ interface ProtectedRouteProps {
   isAuthorized: boolean;
   isSuperAdmin?: boolean;
   requireSuperAdmin?: boolean;
+  redirectPath?: string;
   onLogout: () => Promise<void>;
   children: React.ReactNode;
 }
@@ -20,6 +21,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   isAuthorized,
   isSuperAdmin = false,
   requireSuperAdmin = false,
+  redirectPath,
   onLogout,
   children,
 }) => {
@@ -36,6 +38,9 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   }
 
   if (requireSuperAdmin && !isSuperAdmin) {
+    if (redirectPath) {
+      return <Navigate to={redirectPath} replace />;
+    }
     return <AccessDeniedPage email={user.email ?? "Unknown account"} onLogout={onLogout} />;
   }
 
