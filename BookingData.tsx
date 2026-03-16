@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { db, firebaseConfigError } from "./firebaseConfig";
-import { collection, deleteDoc, doc, getDocs } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDocs, orderBy, query } from "firebase/firestore";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -69,8 +69,8 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
   const [data, setData] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(firebaseConfigError);
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [sortKey, setSortKey] = useState<string | null>("submittedAt");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [searchTerm, setSearchTerm] = useState("");
   const [searchColumn, setSearchColumn] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
@@ -78,6 +78,7 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [filterServiceTypes, setFilterServiceTypes] = useState<string[]>([]);
   const [filterFlexible, setFilterFlexible] = useState<"all" | "yes" | "no">("all");
@@ -99,9 +100,16 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
         return;
       }
       try {
-        const snap = await getDocs(collection(db, "submissions"));
+        const submissionsQuery = query(collection(db, "submissions"), orderBy("submittedAt", "desc"));
+        const snap = await getDocs(submissionsQuery);
         setData(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Submission[]);
-      } catch {
+      } catch (fetchError) {
+        const errorText = fetchError instanceof Error ? fetchError.message : String(fetchError);
+        const indexUrlMatch = errorText.match(/https:\/\/console\.firebase\.google\.com\S+/);
+        if (indexUrlMatch?.[0]) {
+          console.error("Firestore index required. Create it here:", indexUrlMatch[0]);
+        }
+        console.error("Failed to load booking data:", fetchError);
         setErrorMessage("Failed to load booking data from Firestore.");
       } finally {
         setLoading(false);
@@ -159,6 +167,18 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
     // Sort
     if (sortKey) {
       result.sort((a, b) => {
+        if (sortKey === "submittedAt") {
+          const asMillis = (input: unknown) => {
+            const candidate = input as { toMillis?: () => number; toDate?: () => Date };
+            if (candidate?.toMillis) return candidate.toMillis();
+            if (candidate?.toDate) return candidate.toDate().getTime();
+            const parsed = new Date(String(input ?? "")).getTime();
+            return Number.isFinite(parsed) ? parsed : 0;
+          };
+          const cmp = asMillis(a[sortKey]) - asMillis(b[sortKey]);
+          return sortOrder === "asc" ? cmp : -cmp;
+        }
+
         const cmp = String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""));
         return sortOrder === "asc" ? cmp : -cmp;
       });
@@ -270,6 +290,52 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
       setIsDeleting(false);
       setDeleteConfirmId(null);
     }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!db || selectedIds.size === 0) {
+      return;
+    }
+
+    if (!window.confirm(`Delete ${selectedIds.size} selected record(s)? This action cannot be undone.`)) {
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    const ids = Array.from(selectedIds);
+    const failed: string[] = [];
+
+    for (const id of ids) {
+      try {
+        await deleteDoc(doc(db, "submissions", id));
+      } catch {
+        failed.push(id);
+      }
+    }
+
+    const deletedCount = ids.length - failed.length;
+    if (deletedCount > 0) {
+      setData((prev) => prev.filter((row) => !selectedIds.has(row.id)));
+      setSelectedIds(new Set());
+      void logAdminActivity({
+        action: "Deleted booking submission",
+        target: "submissions",
+        metadata: { count: deletedCount, mode: "bulk" },
+      });
+      showToast(`${deletedCount} record(s) deleted successfully.`);
+    }
+
+    if (failed.length > 0) {
+      void logAdminActivity({
+        action: "Deleted booking submission",
+        target: "submissions",
+        status: "error",
+        metadata: { failedCount: failed.length, mode: "bulk" },
+      });
+      showToast(`${failed.length} record(s) failed to delete.`, "error");
+    }
+
+    setIsBulkDeleting(false);
   };
 
   // Derived filter helpers
@@ -480,7 +546,7 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
                   onClick={() => setSortOrder((value) => (value === "asc" ? "desc" : "asc"))}
                   className="min-h-11 rounded-lg border border-[#ffd79e] bg-[#fff8ef] px-3 py-2 text-sm font-semibold text-[#4a1f1f] transition hover:border-[#800000]"
                 >
-                  Sort: {sortOrder === "asc" ? "Ascending" : "Descending"}
+                  Sort: {sortKey === "submittedAt" ? (sortOrder === "desc" ? "Newest First" : "Oldest First") : (sortOrder === "asc" ? "Ascending" : "Descending")}
                 </button>
 
                 <select
@@ -655,6 +721,16 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
                       <span className="font-semibold text-[#800000]">
                         {selectedIds.size} row{selectedIds.size > 1 ? "s" : ""} selected - exports will use selection only
                       </span>
+                      {isSuperAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => void handleBulkDelete()}
+                          disabled={isBulkDeleting}
+                          className="min-h-11 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                        >
+                          {isBulkDeleting ? "Deleting..." : "Bulk Delete"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setSelectedIds(new Set())}
@@ -680,6 +756,28 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
 
             <section className="mb-6 overflow-hidden rounded-2xl border border-[#eecf98] bg-white shadow-[0_18px_34px_-24px_rgba(0,0,0,0.55)]">
               <div className="grid gap-4 p-4 md:hidden">
+                <div className="flex items-center justify-between rounded-xl border border-[#f4ddba] bg-[#fff8ef] px-3 py-2">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-[#6b1b1b]">
+                    <input
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={toggleSelectAllPage}
+                      className="h-6 w-6 cursor-pointer accent-[#800000]"
+                    />
+                    Select all visible
+                  </label>
+                  {isSuperAdmin && selectedIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkDelete()}
+                      disabled={isBulkDeleting}
+                      className="min-h-11 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                    >
+                      {isBulkDeleting ? "Deleting..." : "Bulk Delete"}
+                    </button>
+                  )}
+                </div>
+
                 {paginatedData.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-[#ffd79e] bg-[#fffaf2] px-4 py-10 text-center text-[#8c3b3b]">
                     No records found
@@ -706,7 +804,7 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
                               type="checkbox"
                               checked={isSelected}
                               onChange={() => toggleSelectRow(row.id)}
-                              className="mt-1 h-5 w-5 cursor-pointer accent-[#800000]"
+                              className="mt-1 h-6 w-6 cursor-pointer accent-[#800000]"
                             />
                           </div>
                         </div>
@@ -775,7 +873,7 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
                           type="checkbox"
                           checked={allPageSelected}
                           onChange={toggleSelectAllPage}
-                          className="h-4 w-4 cursor-pointer accent-[#ffb000]"
+                          className="h-5 w-5 cursor-pointer accent-[#ffb000]"
                           title="Select all on this page"
                         />
                       </th>
@@ -820,7 +918,7 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => toggleSelectRow(row.id)}
-                                className="h-4 w-4 cursor-pointer accent-[#800000]"
+                                className="h-5 w-5 cursor-pointer accent-[#800000]"
                               />
                             </td>
                             {COLUMNS.map((col) => {
