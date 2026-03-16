@@ -2,7 +2,6 @@ const fs = require("fs");
 const path = require("path");
 
 const requiredFiles = [
-  path.join("dist", "firebase-messaging-sw.js"),
   path.join("dist", "manifest.webmanifest"),
   path.join("dist", "mdm-logo.png"),
 ];

@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "mdm-website-23"
-  }
+    "default": "mdm-website-23",
+    "production": "mdm-website-23"
+  },
+  "targets": {},
+  "etags": {}
 }

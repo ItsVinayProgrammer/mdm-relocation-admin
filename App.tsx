@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import BookingData from "./BookingData";
 import AccessManagementPage from "./AccessManagementPage";
 import ActivityLogsPage from "./ActivityLogsPage";
@@ -13,6 +13,78 @@ import { logAdminActivity } from "./activityLogger";
 const SUPER_ADMIN_EMAIL = (import.meta.env.VITE_SUPER_ADMIN_EMAIL ?? "itsvinayprogrammer@gmail.com")
   .trim()
   .toLowerCase();
+
+const playNotificationDing = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const AudioContextCtor = (window as typeof window & {
+      webkitAudioContext?: typeof AudioContext;
+    }).AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+    if (!AudioContextCtor) {
+      return;
+    }
+
+    const audioCtx = new AudioContextCtor();
+    const oscillator = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(950, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.22, audioCtx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.30);
+
+    oscillator.connect(gain);
+    gain.connect(audioCtx.destination);
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + 0.30);
+
+    void oscillator.onended;
+    setTimeout(() => {
+      void audioCtx.close();
+    }, 350);
+  } catch {
+    // ignore sound issues (autoplay/unsupported browser)
+  }
+};
+
+const notifyForBooking = (booking: Record<string, unknown>) => {
+  const serviceType = String(booking["service-type"] ?? booking.serviceType ?? "Booking");
+  const pickup = String(booking["from-location"] ?? booking.pickup ?? "Unknown pickup");
+  const drop = String(booking["to-location"] ?? booking.drop ?? "Unknown drop");
+  const body = `${serviceType} from ${pickup} to ${drop}`;
+
+  playNotificationDing();
+
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    return;
+  }
+
+  if (Notification.permission === "granted") {
+    new Notification("🚀 New Booking Received!", {
+      body,
+      icon: "/mdm-logo.png",
+      badge: "/mdm-logo.png",
+    });
+    return;
+  }
+
+  if (Notification.permission === "default") {
+    void Notification.requestPermission().then((permission) => {
+      if (permission === "granted") {
+        new Notification("🚀 New Booking Received!", {
+          body,
+          icon: "/mdm-logo.png",
+          badge: "/mdm-logo.png",
+        });
+      }
+    });
+  }
+};
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -97,6 +169,32 @@ const App: React.FC = () => {
   const isSuperAdmin = !!user?.email && user.email.toLowerCase() === superAdminEmail;
   const hasDashboardAccess = isSuperAdmin || isAuthorized;
   const isRouteLoading = isAuthLoading || isAccessLoading;
+
+  useEffect(() => {
+    if (!db || !hasDashboardAccess) {
+      return;
+    }
+
+    let isInitialSnapshot = true;
+
+    const unsubscribe = onSnapshot(collection(db, "bookings"), (snapshot) => {
+      if (isInitialSnapshot) {
+        isInitialSnapshot = false;
+        return;
+      }
+
+      const newBookings = snapshot.docChanges().filter((change) => change.type === "added");
+      if (newBookings.length === 0) {
+        return;
+      }
+
+      newBookings.forEach((change) => {
+        notifyForBooking(change.doc.data());
+      });
+    });
+
+    return () => unsubscribe();
+  }, [hasDashboardAccess]);
 
   return (
     <BrowserRouter>

@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { canUsePushNotifications, isCurrentDeviceSubscribed } from "./pushNotifications";
 
 interface AdminTopNavProps {
   onLogout: () => Promise<void>;
@@ -10,52 +9,6 @@ interface AdminTopNavProps {
 const AdminTopNav: React.FC<AdminTopNavProps> = ({ onLogout, isSuperAdmin }) => {
   const location = useLocation();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [pushStatus, setPushStatus] = useState<"off" | "on" | "checking">("checking");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const syncPushStatus = async () => {
-      try {
-        const supported = await canUsePushNotifications();
-        if (!supported || cancelled) {
-          if (!cancelled) {
-            setPushStatus("off");
-          }
-          return;
-        }
-
-        const subscribed = await isCurrentDeviceSubscribed();
-        if (!cancelled) {
-          setPushStatus(subscribed ? "on" : "off");
-        }
-      } catch {
-        if (!cancelled) {
-          setPushStatus("off");
-        }
-      }
-    };
-
-    void syncPushStatus();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const pushBadgeClass =
-    pushStatus === "on"
-      ? "border-[#4ade80] bg-[#f0fdf4] text-[#166534]"
-      : pushStatus === "checking"
-        ? "border-[#fcd34d] bg-[#fffbeb] text-[#92400e]"
-        : "border-[#fecaca] bg-[#fef2f2] text-[#991b1b]";
-
-  const pushLabel =
-    pushStatus === "on"
-      ? "🔔 Push: On"
-      : pushStatus === "checking"
-        ? "🔔 Push: ..."
-        : "🔔 Push: Off";
 
   const baseTabClass =
     "min-h-11 rounded-lg px-3 py-2 text-sm font-semibold transition-colors border flex items-center justify-center";
@@ -128,10 +81,6 @@ const AdminTopNav: React.FC<AdminTopNavProps> = ({ onLogout, isSuperAdmin }) => 
             </Link>
           )}
 
-          <span className={`min-h-11 rounded-lg border px-3 py-2 text-xs font-bold ${pushBadgeClass}`}>
-            {pushLabel}
-          </span>
-
           <button
             type="button"
             onClick={onLogout}
@@ -182,10 +131,6 @@ const AdminTopNav: React.FC<AdminTopNavProps> = ({ onLogout, isSuperAdmin }) => 
             Activity Logs
           </Link>
         )}
-
-        <span className={`rounded-lg border px-3 py-2 text-center text-xs font-bold ${pushBadgeClass}`}>
-          {pushLabel}
-        </span>
 
         <button
           type="button"

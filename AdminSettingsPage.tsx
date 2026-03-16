@@ -10,12 +10,6 @@ import {
 import { db } from "./firebaseConfig";
 import AdminTopNav from "./AdminTopNav";
 import { logAdminActivity } from "./activityLogger";
-import {
-  canUsePushNotifications,
-  disablePushNotificationsForDevice,
-  enablePushNotificationsForDevice,
-  isCurrentDeviceSubscribed,
-} from "./pushNotifications";
 
 interface AdminSettingsPageProps {
   onLogout: () => Promise<void>;
@@ -42,9 +36,6 @@ const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({ onLogout, superAd
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [notificationsSupported, setNotificationsSupported] = useState(false);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [isNotificationUpdating, setIsNotificationUpdating] = useState(false);
 
   useEffect(() => {
     if (!db) {
@@ -83,40 +74,6 @@ const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({ onLogout, superAd
 
     return () => clearTimeout(timer);
   }, [toastMessage]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const syncNotificationState = async () => {
-      try {
-        const supported = await canUsePushNotifications();
-        if (cancelled) {
-          return;
-        }
-
-        setNotificationsSupported(supported);
-        if (!supported) {
-          return;
-        }
-
-        const subscribed = await isCurrentDeviceSubscribed();
-        if (!cancelled) {
-          setNotificationsEnabled(subscribed);
-        }
-      } catch (notificationError) {
-        console.error("Failed to evaluate notification support:", notificationError);
-        if (!cancelled) {
-          setNotificationsSupported(false);
-        }
-      }
-    };
-
-    void syncNotificationState();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const normalizedEmail = useMemo(() => newEmail.trim().toLowerCase(), [newEmail]);
   const superAdminEmailNormalized = useMemo(() => SUPER_ADMIN_EMAIL, []);
@@ -228,28 +185,6 @@ const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({ onLogout, superAd
     }
   };
 
-  const handleNotificationToggle = async () => {
-    setIsNotificationUpdating(true);
-    setError(null);
-
-    try {
-      if (notificationsEnabled) {
-        await disablePushNotificationsForDevice();
-        setNotificationsEnabled(false);
-        setToastMessage("Notifications disabled for this device.");
-      } else {
-        await enablePushNotificationsForDevice(superAdminEmail);
-        setNotificationsEnabled(true);
-        setToastMessage("Notifications enabled for this device.");
-      }
-    } catch (notificationError) {
-      console.error("Failed to update notification preference:", notificationError);
-      setError("Unable to update notification preference. Please allow notifications and try again.");
-    } finally {
-      setIsNotificationUpdating(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#fff8ef] px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-6xl">
@@ -260,38 +195,6 @@ const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({ onLogout, superAd
           <p className="mt-1 text-sm text-[#6b1b1b]">
             Manage authorized emails in Firestore collection: authorized_users
           </p>
-
-          <div className="mt-6 rounded-xl border border-[#ffe1b3] bg-[#fffdf9] p-4">
-            <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-              <div>
-                <p className="text-sm font-semibold text-[#7c2d12]">Enable Notifications</p>
-                <p className="mt-1 text-xs text-[#8c3b3b]">
-                  Receive alerts when a new booking request is created.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleNotificationToggle}
-                disabled={!notificationsSupported || isNotificationUpdating}
-                className={`min-h-11 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                  !notificationsSupported
-                    ? "cursor-not-allowed border border-[#e2e8f0] bg-[#f8fafc] text-[#94a3b8]"
-                    : notificationsEnabled
-                      ? "bg-[#166534] text-white hover:bg-[#14532d]"
-                      : "bg-[#800000] text-white hover:bg-[#661010]"
-                } ${isNotificationUpdating ? "opacity-80" : ""}`}
-              >
-                {!notificationsSupported
-                  ? "Not Supported"
-                  : isNotificationUpdating
-                    ? "Updating..."
-                    : notificationsEnabled
-                      ? "Disable Notifications"
-                      : "Enable Notifications"}
-              </button>
-            </div>
-          </div>
 
           {error && (
             <div className="mt-4 rounded-lg border border-[#fca5a5] bg-[#fff1f2] px-4 py-3 text-sm text-[#991b1b]">

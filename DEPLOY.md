@@ -24,7 +24,6 @@ cd functions && npm install && cd ..
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
 - `VITE_SUPER_ADMIN_EMAIL`
-- `VITE_FIREBASE_VAPID_KEY`
 
 4. Build and verify PWA assets:
 
@@ -42,26 +41,13 @@ git push origin main
 
 ## 3. Vercel deploy (Frontend)
 
-1. Set production VAPID key:
-
-```bash
-echo "YOUR_FIREBASE_WEB_PUSH_VAPID_KEY" | vercel env add VITE_FIREBASE_VAPID_KEY production
-```
-
-2. Optional: set for preview/dev too:
-
-```bash
-echo "YOUR_FIREBASE_WEB_PUSH_VAPID_KEY" | vercel env add VITE_FIREBASE_VAPID_KEY preview
-echo "YOUR_FIREBASE_WEB_PUSH_VAPID_KEY" | vercel env add VITE_FIREBASE_VAPID_KEY development
-```
-
-3. Trigger deployment:
+1. Trigger deployment:
 
 ```bash
 vercel --prod
 ```
 
-## 4. Firebase deploy (Functions + optional Hosting)
+## 4. Firebase deploy (Hosting only, if applicable)
 
 1. Login once:
 
@@ -75,16 +61,10 @@ firebase login
 firebase use mdm-website-23
 ```
 
-3. Deploy only cloud functions:
+3. Deploy hosting only:
 
 ```bash
-firebase deploy --only functions
-```
-
-4. Deploy hosting + functions together (if using Firebase Hosting):
-
-```bash
-firebase deploy --only hosting,functions
+firebase deploy --only hosting
 ```
 
 ## 5. Post-deploy validation
