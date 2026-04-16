@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { db, firebaseConfigError } from "./firebaseConfig";
-import { collection, deleteDoc, doc, getDocs, orderBy, query } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDocs } from "firebase/firestore";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -9,6 +9,7 @@ import { logAdminActivity } from "./activityLogger";
 
 interface Submission {
   id: string;
+  sourceCollection: string;
   [key: string]: any;
 }
 
@@ -27,13 +28,316 @@ const COLUMNS = [
   { key: "submittedAt", label: "Submitted At" },
 ];
 
-const fmtDate = (v: string) => (v ? new Date(v).toLocaleDateString() : "");
+const asMillis = (input: unknown): number | null => {
+  if (input == null) {
+    return null;
+  }
+
+  const candidate = input as {
+    toMillis?: () => number;
+    toDate?: () => Date;
+    seconds?: number;
+    nanoseconds?: number;
+  };
+
+  if (typeof candidate.toMillis === "function") {
+    const ms = candidate.toMillis();
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  if (typeof candidate.toDate === "function") {
+    const ms = candidate.toDate().getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  if (typeof candidate.seconds === "number") {
+    const ms = candidate.seconds * 1000 + Math.floor((candidate.nanoseconds ?? 0) / 1000000);
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  if (typeof input === "number") {
+    if (!Number.isFinite(input)) {
+      return null;
+    }
+    return input > 1e12 ? input : input * 1000;
+  }
+
+  if (typeof input === "string") {
+    const raw = input.trim();
+    if (!raw) {
+      return null;
+    }
+
+    const asNumber = Number(raw);
+    if (Number.isFinite(asNumber)) {
+      return asNumber > 1e12 ? asNumber : asNumber * 1000;
+    }
+
+    const parsed = new Date(raw).getTime();
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const formatDateSafe = (input: unknown) => {
+  const ms = asMillis(input);
+  return ms == null ? "" : new Date(ms).toLocaleDateString();
+};
+
+const formatSubmittedAt = (input: unknown) => {
+  const ts = input as { toDate?: () => Date };
+  if (typeof ts?.toDate === "function") {
+    return ts.toDate().toLocaleString();
+  }
+
+  const ms = asMillis(input);
+  return ms == null ? "" : new Date(ms).toLocaleString();
+};
+
+const isRecord = (input: unknown): input is Record<string, unknown> =>
+  typeof input === "object" && input !== null && !Array.isArray(input);
+
+const normalizeKey = (input: string) => input.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const isPrimitiveLike = (input: unknown) =>
+  input == null || ["string", "number", "boolean"].includes(typeof input);
+
+const tryParseJsonContainer = (input: unknown): unknown => {
+  if (typeof input !== "string") {
+    return null;
+  }
+
+  const trimmed = input.trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+};
+
+const deepFindByAliases = (source: unknown, aliases: string[], maxDepth = 5): unknown => {
+  const aliasSet = new Set(aliases.map(normalizeKey));
+  const queue: Array<{ value: unknown; depth: number }> = [{ value: source, depth: 0 }];
+  const visited = new Set<unknown>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    const { value, depth } = current;
+    if (!isRecord(value) && !Array.isArray(value)) {
+      continue;
+    }
+
+    if (visited.has(value)) {
+      continue;
+    }
+    visited.add(value);
+
+    if (isRecord(value)) {
+      const possibleFieldName = value.name ?? value.key ?? value.field ?? value.id ?? value.label;
+      const possibleFieldValue = value.value ?? value.answer ?? value.input ?? value.selected;
+      if (typeof possibleFieldName === "string" && possibleFieldValue !== undefined) {
+        const normalizedName = normalizeKey(possibleFieldName);
+        if (aliasSet.has(normalizedName) && isPrimitiveLike(possibleFieldValue)) {
+          return possibleFieldValue;
+        }
+      }
+
+      for (const [key, child] of Object.entries(value)) {
+        const normalizedCurrentKey = normalizeKey(key);
+        if (aliasSet.has(normalizedCurrentKey) && isPrimitiveLike(child)) {
+          return child;
+        }
+
+        const parsedFromString = tryParseJsonContainer(child);
+        if (depth < maxDepth && parsedFromString && (isRecord(parsedFromString) || Array.isArray(parsedFromString))) {
+          queue.push({ value: parsedFromString, depth: depth + 1 });
+        }
+
+        if (depth < maxDepth && (isRecord(child) || Array.isArray(child))) {
+          queue.push({ value: child, depth: depth + 1 });
+        }
+      }
+    }
+
+    if (Array.isArray(value) && depth < maxDepth) {
+      for (const child of value) {
+        const parsedFromString = tryParseJsonContainer(child);
+        if (parsedFromString && (isRecord(parsedFromString) || Array.isArray(parsedFromString))) {
+          queue.push({ value: parsedFromString, depth: depth + 1 });
+        }
+
+        if (isRecord(child) || Array.isArray(child)) {
+          queue.push({ value: child, depth: depth + 1 });
+        }
+      }
+    }
+  }
+
+  return "";
+};
+
+const pickFirst = (row: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+  return "";
+};
+
+const normalizeFlexible = (input: unknown) => {
+  if (typeof input === "boolean") {
+    return input;
+  }
+
+  const value = String(input ?? "").trim().toLowerCase();
+  return value === "on" || value === "yes" || value === "true" || value === "1";
+};
+
+const SUBMITTED_AT_FALLBACK_KEYS = [
+  "submittedAt",
+  "createdAt",
+  "created_at",
+  "submissionDate",
+  "submissionTimestamp",
+];
+
+const hasValue = (input: unknown) =>
+  input !== undefined && input !== null && String(input).trim() !== "";
+
+const getTimestampFromRecord = (record: Record<string, unknown>): unknown => {
+  for (const key of SUBMITTED_AT_FALLBACK_KEYS) {
+    const direct = record[key];
+    if (hasValue(direct)) {
+      return direct;
+    }
+
+    const nested = deepFindByAliases(record, [key]);
+    if (hasValue(nested)) {
+      return nested;
+    }
+  }
+
+  return "";
+};
+
+const getSubmittedAtValue = (row: Submission) => {
+  const rowCandidate = getTimestampFromRecord(row as Record<string, unknown>);
+  if (hasValue(rowCandidate)) {
+    return rowCandidate;
+  }
+
+  if (row.raw && typeof row.raw === "object") {
+    const rawCandidate = getTimestampFromRecord(row.raw as Record<string, unknown>);
+    if (hasValue(rawCandidate)) {
+      return rawCandidate;
+    }
+  }
+
+  return "";
+};
+
+const getSubmittedAtMs = (row: Submission) => asMillis(getSubmittedAtValue(row));
+
+const normalizeSubmission = (
+  sourceCollection: string,
+  id: string,
+  raw: Record<string, unknown>
+): Submission => {
+  const submittedAtRaw = getTimestampFromRecord(raw);
+
+  const movingDateRaw = deepFindByAliases(raw, [
+    "moving-date",
+    "movingDate",
+    "date",
+    "shiftDate",
+    "moveDate",
+    "pickupDate",
+  ]);
+
+  const flexibleRaw = deepFindByAliases(raw, [
+    "flexible-date",
+    "flexibleDate",
+    "isDateFlexible",
+    "flexible",
+    "dateFlexible",
+  ]);
+
+  const serviceTypeRaw = deepFindByAliases(raw, [
+    "service-type",
+    "serviceType",
+    "service",
+    "service_name",
+    "serviceName",
+    "moveType",
+    "quoteType",
+  ]);
+
+  const pickupRaw = deepFindByAliases(raw, [
+    "from-location",
+    "fromLocation",
+    "pickup",
+    "pickupLocation",
+    "origin",
+    "movingFrom",
+    "from",
+  ]);
+
+  const dropRaw = deepFindByAliases(raw, [
+    "to-location",
+    "toLocation",
+    "drop",
+    "dropLocation",
+    "destination",
+    "movingTo",
+    "to",
+  ]);
+
+  const phoneRaw = deepFindByAliases(raw, [
+    "phone-number",
+    "phoneNumber",
+    "phone",
+    "mobile",
+    "contactNumber",
+    "contact",
+    "whatsapp",
+  ]);
+
+  const formIdRaw = deepFindByAliases(raw, ["formId", "formID", "formName", "sourceForm", "form", "source"]);
+
+  return {
+    id,
+    sourceCollection,
+    formId: String(formIdRaw || ""),
+    "service-type": String(serviceTypeRaw || ""),
+    "from-location": String(pickupRaw || ""),
+    "to-location": String(dropRaw || ""),
+    "phone-number": String(phoneRaw || ""),
+    "moving-date": String(movingDateRaw ?? ""),
+    "flexible-date": normalizeFlexible(flexibleRaw) ? "on" : "off",
+    submittedAt: submittedAtRaw,
+    submittedAtMs: asMillis(submittedAtRaw),
+    raw,
+  };
+};
+
 const fmtPhone = (v: string) => (v ? v.replace(/(\d{5})(\d{5})/, "$1-$2") : "");
 
 const displayCell = (colKey: string, val: unknown): string => {
-  if (colKey === "submittedAt") return fmtDate(String(val ?? ""));
+  if (colKey === "submittedAt") return formatSubmittedAt(val);
   if (colKey === "flexible-date") return val === "on" ? "Yes" : "No";
   if (colKey === "phone-number") return fmtPhone(String(val ?? ""));
+  if (colKey === "moving-date") return formatDateSafe(val) || String(val ?? "");
   return String(val ?? "");
 };
 
@@ -44,7 +348,7 @@ const toExportObj = (row: Submission) => ({
   "Phone Number": row["phone-number"] || "",
   "Moving Date": row["moving-date"] || "",
   "Flexible Date": row["flexible-date"] === "on" ? "Yes" : "No",
-  "Submitted At": row["submittedAt"] ? new Date(row["submittedAt"]).toLocaleDateString() : "",
+  "Submitted At": formatSubmittedAt(getSubmittedAtValue(row)),
 });
 
 const toExportArr = (row: Submission) => [
@@ -54,7 +358,7 @@ const toExportArr = (row: Submission) => [
   row["phone-number"] || "",
   row["moving-date"] || "",
   row["flexible-date"] === "on" ? "Yes" : "No",
-  row["submittedAt"] ? new Date(row["submittedAt"]).toLocaleDateString() : "",
+  formatSubmittedAt(getSubmittedAtValue(row)),
 ];
 
 const SORT_OPTIONS = [
@@ -63,6 +367,17 @@ const SORT_OPTIONS = [
   { key: "service-type", label: "Service Type" },
   { key: "from-location", label: "Pickup Location" },
   { key: "to-location", label: "Drop Location" },
+];
+
+const FORM_COLLECTION_CANDIDATES = [
+  "submissions",
+  "bookings",
+  "quote_submissions",
+  "popup_quote_submissions",
+  "popup_quotes",
+  "quotes",
+  "leads",
+  "quote_requests",
 ];
 
 const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => {
@@ -100,9 +415,27 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
         return;
       }
       try {
-        const submissionsQuery = query(collection(db, "submissions"), orderBy("submittedAt", "desc"));
-        const snap = await getDocs(submissionsQuery);
-        setData(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Submission[]);
+        const collectionRows = await Promise.all(
+          FORM_COLLECTION_CANDIDATES.map(async (collectionName) => {
+            try {
+              const snap = await getDocs(collection(db, collectionName));
+              return snap.docs.map((entry) =>
+                normalizeSubmission(collectionName, entry.id, entry.data() as Record<string, unknown>)
+              );
+            } catch (collectionError) {
+              console.warn(`Skipping collection ${collectionName}:`, collectionError);
+              return [] as Submission[];
+            }
+          })
+        );
+
+        const merged = collectionRows.flat().sort((a, b) => {
+          const aMs = getSubmittedAtMs(a) ?? a.submittedAtMs ?? 0;
+          const bMs = getSubmittedAtMs(b) ?? b.submittedAtMs ?? 0;
+          return bMs - aMs;
+        });
+
+        setData(merged);
       } catch (fetchError) {
         const errorText = fetchError instanceof Error ? fetchError.message : String(fetchError);
         const indexUrlMatch = errorText.match(/https:\/\/console\.firebase\.google\.com\S+/);
@@ -155,27 +488,26 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
     // Submitted At range
     if (filterSubmittedFrom) {
       const from = new Date(filterSubmittedFrom).getTime();
-      result = result.filter((row) => row["submittedAt"] && new Date(row["submittedAt"]).getTime() >= from);
+      result = result.filter((row) => {
+        const ms = getSubmittedAtMs(row) ?? asMillis(row["submittedAt"]);
+        return ms != null && ms >= from;
+      });
     }
     if (filterSubmittedTo) {
       const to = new Date(filterSubmittedTo);
       to.setHours(23, 59, 59, 999);
       const toMs = to.getTime();
-      result = result.filter((row) => row["submittedAt"] && new Date(row["submittedAt"]).getTime() <= toMs);
+      result = result.filter((row) => {
+        const ms = getSubmittedAtMs(row) ?? asMillis(row["submittedAt"]);
+        return ms != null && ms <= toMs;
+      });
     }
 
     // Sort
     if (sortKey) {
       result.sort((a, b) => {
         if (sortKey === "submittedAt") {
-          const asMillis = (input: unknown) => {
-            const candidate = input as { toMillis?: () => number; toDate?: () => Date };
-            if (candidate?.toMillis) return candidate.toMillis();
-            if (candidate?.toDate) return candidate.toDate().getTime();
-            const parsed = new Date(String(input ?? "")).getTime();
-            return Number.isFinite(parsed) ? parsed : 0;
-          };
-          const cmp = asMillis(a[sortKey]) - asMillis(b[sortKey]);
+          const cmp = (getSubmittedAtMs(a) ?? asMillis(a[sortKey]) ?? 0) - (getSubmittedAtMs(b) ?? asMillis(b[sortKey]) ?? 0);
           return sortOrder === "asc" ? cmp : -cmp;
         }
 
@@ -267,21 +599,26 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
 
   const handleDeleteRow = async (id: string) => {
     if (!db) return;
+    const rowToDelete = data.find((entry) => entry.id === id);
+    if (!rowToDelete) {
+      showToast("Record not found.", "error");
+      return;
+    }
     setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, "submissions", id));
+      await deleteDoc(doc(db, rowToDelete.sourceCollection, id));
       setData((prev) => prev.filter((r) => r.id !== id));
       setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
       void logAdminActivity({
         action: "Deleted booking submission",
-        target: "submissions",
+        target: rowToDelete.sourceCollection,
         metadata: { submissionId: id },
       });
       showToast("Record deleted successfully.");
     } catch {
       void logAdminActivity({
         action: "Deleted booking submission",
-        target: "submissions",
+        target: rowToDelete.sourceCollection,
         status: "error",
         metadata: { submissionId: id },
       });
@@ -307,7 +644,12 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
 
     for (const id of ids) {
       try {
-        await deleteDoc(doc(db, "submissions", id));
+        const rowToDelete = data.find((entry) => entry.id === id);
+        if (!rowToDelete) {
+          failed.push(id);
+          continue;
+        }
+        await deleteDoc(doc(db, rowToDelete.sourceCollection, id));
       } catch {
         failed.push(id);
       }
@@ -846,7 +1188,7 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
                         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#f4ddba] bg-[#fffdf9] px-4 py-3">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8c3b3b]">Submitted</p>
-                            <p className="mt-1 text-sm text-[#4a1f1f]">{displayCell("submittedAt", row["submittedAt"]) || "-"}</p>
+                            <p className="mt-1 text-sm text-[#4a1f1f]">{displayCell("submittedAt", getSubmittedAtValue(row)) || "-"}</p>
                           </div>
                           {isSuperAdmin && (
                             <button
@@ -923,9 +1265,11 @@ const BookingData: React.FC<BookingDataProps> = ({ onLogout, isSuperAdmin }) => 
                             </td>
                             {COLUMNS.map((col) => {
                               const val = displayCell(col.key, row[col.key]);
+                              const cellValue = col.key === "submittedAt" ? getSubmittedAtValue(row) : row[col.key];
+                              const displayValue = displayCell(col.key, cellValue);
                               return (
                                 <td key={col.key} className="px-4 py-3 text-[#4a1f1f]">
-                                  {val || <span className="text-[#c4a882]">-</span>}
+                                  {displayValue || <span className="text-[#c4a882]">-</span>}
                                 </td>
                               );
                             })}

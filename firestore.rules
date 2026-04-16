@@ -5,26 +5,30 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function normalizedAuthEmail() {
+      return signedIn() && request.auth.token.email != null
+        ? request.auth.token.email.lower()
+        : null;
+    }
+
     function isSuperAdmin() {
-      return signedIn() && request.auth.token.email == "itsvinayprogrammer@gmail.com";
+      return normalizedAuthEmail() == "itsvinayprogrammer@gmail.com";
     }
 
     function isAuthorizedUser() {
-      return signedIn()
-        && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/authorized_users/$(request.auth.token.email));
+      return normalizedAuthEmail() != null
+        && exists(/databases/$(database)/documents/authorized_users/$(normalizedAuthEmail()));
     }
 
     match /authorized_users/{userEmail} {
       allow get: if isSuperAdmin() || (
-        signedIn()
-        && request.auth.token.email != null
-        && request.auth.token.email == userEmail
+        normalizedAuthEmail() != null
+        && normalizedAuthEmail() == userEmail.lower()
       );
 
       allow list: if isSuperAdmin();
       allow create, update: if isSuperAdmin();
-      allow delete: if isSuperAdmin() && userEmail != "itsvinayprogrammer@gmail.com";
+      allow delete: if isSuperAdmin() && userEmail.lower() != "itsvinayprogrammer@gmail.com";
     }
 
     match /bookings/{bookingId} {
@@ -41,9 +45,9 @@ service cloud.firestore {
 
     match /admin_activity_logs/{logId} {
       allow get, list: if isSuperAdmin();
-      allow create: if signedIn()
-        && request.auth.token.email != null
-        && request.resource.data.email == request.auth.token.email;
+      allow create: if normalizedAuthEmail() != null
+        && request.resource.data.email is string
+        && request.resource.data.email.lower() == normalizedAuthEmail();
     }
 
     match /{document=**} {
